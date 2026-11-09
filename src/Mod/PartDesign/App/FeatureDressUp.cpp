@@ -275,6 +275,11 @@ std::vector<TopoShape> DressUp::getContinuousEdges(const TopoShape& shape)
         const TopoDS_Shape& face1 = faces.front();
         const TopoDS_Shape& face2 = faces.back();
 
+        if (face1.IsSame(face2)
+            || BRep_Tool::IsClosed(TopoDS::Edge(subshape), TopoDS::Face(face1))) {
+            return;
+        }
+
         const GeomAbs_Shape cont
             = BRep_Tool::Continuity(TopoDS::Edge(subshape), TopoDS::Face(face1), TopoDS::Face(face2));
 
