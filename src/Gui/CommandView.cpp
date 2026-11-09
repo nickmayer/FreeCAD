@@ -1226,6 +1226,74 @@ bool StdCmdHideSelection::isActive()
 //===========================================================================
 // Std_SelectVisibleObjects
 //===========================================================================
+//===========================================================================
+// Std_IsolateSelection
+//===========================================================================
+DEF_STD_CMD_A(StdCmdIsolateSelection)
+
+StdCmdIsolateSelection::StdCmdIsolateSelection()
+    : Command("Std_IsolateSelection")
+{
+    sGroup = "Standard-View";
+    sMenuText = QT_TR_NOOP("&Isolate Selection");
+    sToolTipText = QT_TR_NOOP("Isolates the selected objects or unisolates if already isolated");
+    sStatusTip = sToolTipText;
+    sWhatsThis = "Std_IsolateSelection";
+    sPixmap = "Std_IsolateSelection";
+    eType = Alter3DView;
+}
+
+void StdCmdIsolateSelection::activated(int iMsg)
+{
+    Q_UNUSED(iMsg);
+    auto* tree = TreeWidget::instance();
+    if (!tree) {
+        return;
+    }
+    Gui::Document* guiDoc = Application::Instance->activeDocument();
+    if (!guiDoc || !guiDoc->getDocument()) {
+        return;
+    }
+    DocumentItem* docItem = tree->getDocumentItem(guiDoc);
+    if (!docItem) {
+        return;
+    }
+
+    std::vector<App::DocumentObject*> sel = Selection().getObjectsOfType(
+        App::DocumentObject::getClassTypeId(),
+        guiDoc->getDocument()->getName()
+    );
+    if (sel.empty()) {
+        if (docItem->isIsolated()) {
+            docItem->unisolate();
+        }
+        return;
+    }
+
+    std::set<App::DocumentObject*> selSet(sel.begin(), sel.end());
+    if (docItem->isIsolated() && docItem->getIsolatedObjects() == selSet) {
+        docItem->unisolate();
+    }
+    else {
+        docItem->isolateObjects(sel);
+    }
+}
+
+bool StdCmdIsolateSelection::isActive()
+{
+    if (Gui::Selection().size() != 0) {
+        return true;
+    }
+    if (auto* tree = TreeWidget::instance()) {
+        if (auto* guiDoc = Application::Instance->activeDocument()) {
+            if (auto* docItem = tree->getDocumentItem(guiDoc)) {
+                return docItem->isIsolated();
+            }
+        }
+    }
+    return false;
+}
+
 DEF_STD_CMD_A(StdCmdSelectVisibleObjects)
 
 StdCmdSelectVisibleObjects::StdCmdSelectVisibleObjects()
@@ -4264,6 +4332,7 @@ void CreateViewStdCommands()
     rcCmdMgr.addCommand(new StdCmdToggleSelectability());
     rcCmdMgr.addCommand(new StdCmdShowSelection());
     rcCmdMgr.addCommand(new StdCmdHideSelection());
+    rcCmdMgr.addCommand(new StdCmdIsolateSelection());
     rcCmdMgr.addCommand(new StdCmdSelectVisibleObjects());
     rcCmdMgr.addCommand(new StdCmdToggleObjects());
     rcCmdMgr.addCommand(new StdCmdShowObjects());
