@@ -21,6 +21,7 @@
  ***************************************************************************/
 
 
+#include <unordered_set>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -53,6 +54,7 @@
 #include <App/AutoTransaction.h>
 #include <App/GeoFeatureGroupExtension.h>
 #include <App/Link.h>
+#include <App/Origin.h>
 #include <App/SuppressibleExtension.h>
 
 #include "Tree.h"
@@ -605,6 +607,15 @@ TreeWidget::TreeWidget(const char* name, QWidget* parent)
         this,
         &TreeWidget::onToggleVisibilityInTree
     );
+
+    this->isolateAction = new QAction(this);
+    connect(this->isolateAction, &QAction::triggered, this, &TreeWidget::onIsolate);
+    if (auto isolateCmd
+        = Gui::Application::Instance->commandManager().getCommandByName("Std_IsolateSelection")) {
+        isolateCmd->addTo(this);
+        this->isolateAction->setShortcut(isolateCmd->getShortcut());
+        this->isolateAction->setShortcutVisibleInContextMenu(true);
+    }
 
     this->createGroupAction = new QAction(this);
     connect(this->createGroupAction, &QAction::triggered, this, &TreeWidget::onCreateGroup);
@@ -1215,6 +1226,8 @@ void TreeWidget::contextMenuEvent(QContextMenuEvent* e)
 
         showHiddenAction->setChecked(docitem->showHidden());
         contextMenu.addAction(this->showHiddenAction);
+        updateIsolateAction(this->contextItem);
+        contextMenu.addAction(this->isolateAction);
         contextMenu.addAction(this->openFileLocationAction);
         contextMenu.addAction(this->searchObjectsAction);
         contextMenu.addAction(this->closeDocAction);
@@ -1267,6 +1280,10 @@ void TreeWidget::contextMenuEvent(QContextMenuEvent* e)
         showHiddenAction->setChecked(doc->ShowHidden.getValue());
         contextMenu.addAction(this->showHiddenAction);
         contextMenu.addAction(this->toggleVisibilityInTreeAction);
+        if (!acrossDocuments) {
+            updateIsolateAction(this->contextItem);
+            contextMenu.addAction(this->isolateAction);
+        }
 
         if (!acrossDocuments) {  // is only sensible for selections within one document
             if (objitem->object()->getObject()->isDerivedFrom<App::DocumentObjectGroup>()) {
@@ -3903,6 +3920,12 @@ void TreeWidget::setupText()
         tr("Toggles the visibility of selected items in the tree view")
     );
 
+    this->isolateAction->setText(tr("Isolate"));
+    this->isolateAction->setStatusTip(
+        tr("Isolates the selected items by hiding all other items in the document")
+    );
+    this->isolateAction->setIcon(BitmapFactory().iconFromTheme("Std_IsolateSelection"));
+
     this->createGroupAction->setText(tr("Create Group"));
     this->createGroupAction->setStatusTip(tr("Creates a group"));
 
@@ -3997,6 +4020,153 @@ void TreeWidget::onToggleVisibilityInTree()
                 objectItem->setSelected(false);
             }
         }
+    }
+}
+
+std::vector<App::DocumentObject*> TreeWidget::getIsolateTargets(
+    QTreeWidgetItem* item,
+    DocumentItem*& outDocItem
+) const
+{
+    outDocItem = nullptr;
+    std::vector<App::DocumentObject*> targets;
+
+    if (item && item->type() == DocumentType) {
+        outDocItem = static_cast<DocumentItem*>(item);
+        return targets;
+    }
+
+    if (item && item->type() == ObjectType) {
+        auto* ctxObjItem = static_cast<DocumentObjectItem*>(item);
+        outDocItem = ctxObjItem->getOwnerDocument();
+        if (ctxObjItem->isSelected()) {
+            const auto selItems = selectedItems();
+            for (auto* sel : selItems) {
+                if (sel->type() == ObjectType) {
+                    auto* objItem = static_cast<DocumentObjectItem*>(sel);
+                    if (objItem->getOwnerDocument() == outDocItem && objItem->object()
+                        && objItem->object()->getObject()) {
+                        auto* obj = objItem->object()->getObject();
+                        if (std::ranges::find(targets, obj) == targets.end()) {
+                            targets.push_back(obj);
+                        }
+                    }
+                }
+            }
+        }
+        if (ctxObjItem->object() && ctxObjItem->object()->getObject()) {
+            auto* ctxObj = ctxObjItem->object()->getObject();
+            if (std::ranges::find(targets, ctxObj) == targets.end()) {
+                targets.push_back(ctxObj);
+            }
+        }
+        return targets;
+    }
+
+    const auto selItems = selectedItems();
+    for (auto* sel : selItems) {
+        if (sel->type() == DocumentType) {
+            outDocItem = static_cast<DocumentItem*>(sel);
+            return {};
+        }
+        if (sel->type() == ObjectType) {
+            auto* objItem = static_cast<DocumentObjectItem*>(sel);
+            if (!outDocItem) {
+                outDocItem = objItem->getOwnerDocument();
+            }
+            if (objItem->getOwnerDocument() == outDocItem && objItem->object()
+                && objItem->object()->getObject()) {
+                auto* obj = objItem->object()->getObject();
+                if (std::ranges::find(targets, obj) == targets.end()) {
+                    targets.push_back(obj);
+                }
+            }
+        }
+    }
+
+    if (!outDocItem) {
+        if (auto* activeGuiDoc = Application::Instance->activeDocument()) {
+            outDocItem = getDocumentItem(activeGuiDoc);
+            if (outDocItem && activeGuiDoc->getDocument()) {
+                targets = Selection().getObjectsOfType(
+                    App::DocumentObject::getClassTypeId(),
+                    activeGuiDoc->getDocument()->getName()
+                );
+            }
+        }
+    }
+
+    return targets;
+}
+
+void TreeWidget::updateIsolateAction(QTreeWidgetItem* item)
+{
+    if (!item) {
+        this->isolateAction->setText(tr("Isolate"));
+        this->isolateAction->setStatusTip(
+            tr("Isolates the selected items by hiding all other items in the document")
+        );
+        this->isolateAction->setIcon(BitmapFactory().iconFromTheme("Std_IsolateSelection"));
+        this->isolateAction->setEnabled(false);
+        return;
+    }
+
+    if (item->type() == DocumentType) {
+        auto* docItem = static_cast<DocumentItem*>(item);
+        this->isolateAction->setText(tr("Unisolate"));
+        this->isolateAction->setStatusTip(
+            tr("Restores visibility of all objects hidden by isolation")
+        );
+        this->isolateAction->setIcon(BitmapFactory().iconFromTheme("Std_UnisolateSelection"));
+        this->isolateAction->setEnabled(docItem->isIsolated());
+        return;
+    }
+
+    if (item->type() == ObjectType) {
+        DocumentItem* docItem = nullptr;
+        auto targets = getIsolateTargets(item, docItem);
+        std::set<App::DocumentObject*> targetSet(targets.begin(), targets.end());
+        bool isTargetIsolated = docItem && docItem->isIsolated()
+            && docItem->getIsolatedObjects() == targetSet;
+        if (isTargetIsolated) {
+            this->isolateAction->setText(tr("Unisolate"));
+            this->isolateAction->setStatusTip(
+                tr("Restores visibility of all objects hidden by isolation")
+            );
+            this->isolateAction->setIcon(BitmapFactory().iconFromTheme("Std_UnisolateSelection"));
+        }
+        else {
+            this->isolateAction->setText(tr("Isolate"));
+            this->isolateAction->setStatusTip(
+                tr("Isolates the selected items by hiding all other items in the document")
+            );
+            this->isolateAction->setIcon(BitmapFactory().iconFromTheme("Std_IsolateSelection"));
+        }
+        this->isolateAction->setEnabled(!targetSet.empty());
+    }
+}
+
+void TreeWidget::onIsolate()
+{
+    DocumentItem* docItem = nullptr;
+    std::vector<App::DocumentObject*> targets = getIsolateTargets(this->contextItem, docItem);
+    if (!docItem) {
+        return;
+    }
+
+    if (targets.empty()) {
+        if (docItem->isIsolated()) {
+            docItem->unisolate();
+        }
+        return;
+    }
+
+    std::set<App::DocumentObject*> targetSet(targets.begin(), targets.end());
+    if (docItem->isIsolated() && docItem->getIsolatedObjects() == targetSet) {
+        docItem->unisolate();
+    }
+    else {
+        docItem->isolateObjects(targets);
     }
 }
 
@@ -4626,6 +4796,17 @@ void TreeWidget::slotDeleteDocument(const Gui::Document& Doc)
 
 void TreeWidget::slotDeleteObject(const Gui::ViewProviderDocumentObject& view)
 {
+    if (auto* obj = view.getObject()) {
+        for (auto& [doc, docItem] : DocumentMap) {
+            if (docItem) {
+                docItem->isolatedObjects.erase(obj);
+                docItem->visibilityBackup.erase(obj);
+                if (docItem->isolatedObjects.empty()) {
+                    docItem->visibilityBackup.clear();
+                }
+            }
+        }
+    }
     _slotDeleteObject(view, nullptr);
 }
 
@@ -4661,6 +4842,11 @@ void TreeWidget::_slotDeleteObject(const Gui::ViewProviderDocumentObject& view, 
 
         if (obj->getDocument() == doc) {
             docItem->_ParentMap.erase(obj);
+            docItem->isolatedObjects.erase(obj);
+            docItem->visibilityBackup.erase(obj);
+            if (docItem->isolatedObjects.empty()) {
+                docItem->visibilityBackup.clear();
+            }
         }
 
         for (auto cit = items.begin(), citNext = cit; cit != items.end(); cit = citNext) {
@@ -6078,6 +6264,274 @@ void DocumentItem::setShowHidden(bool show)
     pDocument->getDocument()->ShowHidden.setValue(show);
 }
 
+bool DocumentItem::isIsolated() const
+{
+    return !isolatedObjects.empty();
+}
+
+const std::set<App::DocumentObject*>& DocumentItem::getIsolatedObjects() const
+{
+    return isolatedObjects;
+}
+
+void DocumentItem::isolateObjects(const std::vector<App::DocumentObject*>& objs)
+{
+    if (!pDocument || !pDocument->getDocument()) {
+        return;
+    }
+
+    App::Document* doc = pDocument->getDocument();
+    std::set<App::DocumentObject*> targets;
+    for (auto* obj : objs) {
+        if (obj && obj->isAttachedToDocument() && obj->getDocument() == doc) {
+            targets.insert(obj);
+        }
+    }
+    if (targets.empty()) {
+        return;
+    }
+
+    if (isIsolated()) {
+        unisolate();
+    }
+
+    if (getTree()) {
+        getTree()->_updateStatus(false);
+    }
+
+    const auto allObjects = doc->getObjects();
+    visibilityBackup.clear();
+    for (auto* obj : allObjects) {
+        if (obj && obj->isAttachedToDocument()) {
+            visibilityBackup[obj] = obj->Visibility.getValue();
+        }
+    }
+    isolatedObjects = targets;
+
+    auto getClaimedChildren = [this](App::DocumentObject* obj) {
+        std::vector<App::DocumentObject*> result;
+        auto it = ObjectMap.find(obj);
+        if (it != ObjectMap.end() && it->second) {
+            result = it->second->children;
+        }
+        else if (auto* vp = getViewProvider(obj)) {
+            result = vp->claimChildren();
+        }
+        if (obj->hasExtension(App::GroupExtension::getExtensionClassTypeId())) {
+            if (auto* grp = obj->getExtensionByType<App::GroupExtension>(true)) {
+                for (auto* child : grp->Group.getValues()) {
+                    if (child && std::ranges::find(result, child) == result.end()) {
+                        result.push_back(child);
+                    }
+                }
+            }
+        }
+        return result;
+    };
+
+    std::unordered_map<App::DocumentObject*, std::set<App::DocumentObject*>> parentMap = _ParentMap;
+    for (auto* obj : allObjects) {
+        if (!obj || !obj->isAttachedToDocument()) {
+            continue;
+        }
+        for (auto* child : getClaimedChildren(obj)) {
+            if (child && child->isAttachedToDocument() && child->getDocument() == doc) {
+                parentMap[child].insert(obj);
+            }
+        }
+        if (auto* grpParent = App::GroupExtension::getGroupOfObject(obj)) {
+            if (grpParent->getDocument() == doc) {
+                parentMap[obj].insert(grpParent);
+            }
+        }
+        if (auto* geoGrpParent = App::GeoFeatureGroupExtension::getGroupOfObject(obj)) {
+            if (geoGrpParent->getDocument() == doc) {
+                parentMap[obj].insert(geoGrpParent);
+            }
+        }
+    }
+
+    auto isCompletelyHiddenPlainGroup = [&](App::DocumentObject* obj) {
+        if (!obj || !obj->hasExtension(App::GroupExtension::getExtensionClassTypeId())
+            || obj->hasExtension(App::GeoFeatureGroupExtension::getExtensionClassTypeId())) {
+            return false;
+        }
+        if (visibilityBackup[obj]) {
+            return false;
+        }
+        if (auto* grp = obj->getExtensionByType<App::GroupExtension>(true)) {
+            for (auto* child : grp->Group.getValues()) {
+                if (child && visibilityBackup[child]) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    std::set<App::DocumentObject*> descendants;
+    std::set<App::DocumentObject*> hiddenGroupDescendants;
+    std::function<void(App::DocumentObject*, bool)> collectDescendants =
+        [&](App::DocumentObject* current, bool fromHiddenPlainGroup) {
+            for (auto* child : getClaimedChildren(current)) {
+                if (!child || !child->isAttachedToDocument() || child->getDocument() != doc) {
+                    continue;
+                }
+                if (targets.contains(child)) {
+                    continue;
+                }
+                bool childIsHiddenPlainGroup = isCompletelyHiddenPlainGroup(child);
+                if (descendants.insert(child).second) {
+                    if (fromHiddenPlainGroup) {
+                        hiddenGroupDescendants.insert(child);
+                    }
+                    collectDescendants(child, childIsHiddenPlainGroup);
+                }
+                else if (fromHiddenPlainGroup && hiddenGroupDescendants.insert(child).second) {
+                    collectDescendants(child, childIsHiddenPlainGroup);
+                }
+            }
+        };
+
+    for (auto* target : targets) {
+        collectDescendants(target, isCompletelyHiddenPlainGroup(target));
+    }
+
+    auto isContainerObject = [](App::DocumentObject* obj) {
+        if (!obj) {
+            return false;
+        }
+        if (obj->hasChildElement()) {
+            return true;
+        }
+        if (obj->getLinkedObject(false) != obj) {
+            return false;
+        }
+        return obj->hasExtension(App::GroupExtension::getExtensionClassTypeId())
+            || obj->hasExtension(App::GeoFeatureGroupExtension::getExtensionClassTypeId())
+            || obj->isDerivedFrom<App::Origin>();
+    };
+
+    std::set<App::DocumentObject*> ancestorContainers;
+    std::set<App::DocumentObject*> visitedAncestors;
+    std::function<void(App::DocumentObject*)> collectAncestors = [&](App::DocumentObject* current) {
+        auto it = parentMap.find(current);
+        if (it == parentMap.end()) {
+            return;
+        }
+        for (auto* parent : it->second) {
+            if (!parent || !parent->isAttachedToDocument() || parent->getDocument() != doc) {
+                continue;
+            }
+            if (!isContainerObject(parent)) {
+                continue;
+            }
+            if (!visitedAncestors.insert(parent).second) {
+                continue;
+            }
+            ancestorContainers.insert(parent);
+            collectAncestors(parent);
+        }
+    };
+
+    for (auto* target : targets) {
+        collectAncestors(target);
+    }
+
+    std::unordered_map<App::DocumentObject*, bool> desiredVis;
+    for (auto* obj : allObjects) {
+        if (!obj || !obj->isAttachedToDocument()) {
+            continue;
+        }
+        if (targets.contains(obj) || ancestorContainers.contains(obj)) {
+            desiredVis[obj] = true;
+        }
+        else if (descendants.contains(obj)) {
+            desiredVis[obj] = hiddenGroupDescendants.contains(obj) ? true : visibilityBackup[obj];
+        }
+        else {
+            desiredVis[obj] = false;
+        }
+    }
+
+    // Pass 1: Apply plain GroupExtension visibilities first so group cascading
+    // does not clobber individual child visibilities in Pass 2.
+    for (const auto& [obj, vis] : desiredVis) {
+        if (obj->hasExtension(App::GroupExtension::getExtensionClassTypeId())
+            && !obj->hasExtension(App::GeoFeatureGroupExtension::getExtensionClassTypeId())) {
+            if (obj->Visibility.getValue() != vis) {
+                obj->Visibility.setValue(vis);
+            }
+        }
+    }
+
+    // Pass 2: Apply exact desired visibilities to all objects.
+    for (const auto& [obj, vis] : desiredVis) {
+        if (obj->Visibility.getValue() != vis) {
+            obj->Visibility.setValue(vis);
+        }
+    }
+
+    for (auto* tree : TreeWidget::Instances) {
+        if (auto* otherDocItem = tree->getDocumentItem(pDocument);
+            otherDocItem && otherDocItem != this) {
+            otherDocItem->isolatedObjects = this->isolatedObjects;
+            otherDocItem->visibilityBackup = this->visibilityBackup;
+        }
+    }
+
+    TreeWidget::updateVisibilityIcons();
+}
+
+void DocumentItem::unisolate()
+{
+    if (!pDocument || !pDocument->getDocument()) {
+        isolatedObjects.clear();
+        visibilityBackup.clear();
+        return;
+    }
+
+    App::Document* doc = pDocument->getDocument();
+    const auto& currentObjs = doc->getObjects();
+    std::unordered_set<App::DocumentObject*> validObjs(currentObjs.begin(), currentObjs.end());
+
+    // Pass 1: Restore plain GroupExtension objects first.
+    for (const auto& [obj, vis] : visibilityBackup) {
+        if (!validObjs.contains(obj) || !obj->isAttachedToDocument()) {
+            continue;
+        }
+        if (obj->hasExtension(App::GroupExtension::getExtensionClassTypeId())
+            && !obj->hasExtension(App::GeoFeatureGroupExtension::getExtensionClassTypeId())) {
+            if (obj->Visibility.getValue() != vis) {
+                obj->Visibility.setValue(vis);
+            }
+        }
+    }
+
+    // Pass 2: Restore all objects to their exact pre-isolation visibility.
+    for (const auto& [obj, vis] : visibilityBackup) {
+        if (!validObjs.contains(obj) || !obj->isAttachedToDocument()) {
+            continue;
+        }
+        if (obj->Visibility.getValue() != vis) {
+            obj->Visibility.setValue(vis);
+        }
+    }
+
+    isolatedObjects.clear();
+    visibilityBackup.clear();
+
+    for (auto* tree : TreeWidget::Instances) {
+        if (auto* otherDocItem = tree->getDocumentItem(pDocument);
+            otherDocItem && otherDocItem != this) {
+            otherDocItem->isolatedObjects.clear();
+            otherDocItem->visibilityBackup.clear();
+        }
+    }
+
+    TreeWidget::updateVisibilityIcons();
+}
+
 bool DocumentItem::showItem(DocumentObjectItem* item, bool select, bool force)
 {
     auto parent = item->parent();
@@ -6596,10 +7050,14 @@ void DocumentObjectItem::displayStatusInfo()
                          .arg(info, QString::fromUtf8(Obj->getNameInDocument()));
 
     if (!Obj->isError()) {
-        getMainWindow()->showMessage(status);
+        if (auto* mw = getMainWindow()) {
+            mw->showMessage(status);
+        }
     }
     else {
-        getMainWindow()->showStatus(MainWindow::Err, status);
+        if (auto* mw = getMainWindow()) {
+            mw->showStatus(MainWindow::Err, status);
+        }
         QTreeWidget* tree = this->treeWidget();
         QPoint pos = tree->visualItemRect(this).topRight();
         QToolTip::showText(tree->mapToGlobal(pos), info);

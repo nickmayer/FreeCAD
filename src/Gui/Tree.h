@@ -57,7 +57,7 @@ GuiExport bool isTreeViewDragging();
 /** Tree view that allows drag & drop of document objects.
  * @author Werner Mayer
  */
-class TreeWidget: public QTreeWidget, public SelectionObserver
+class GuiExport TreeWidget: public QTreeWidget, public SelectionObserver
 {
     Q_OBJECT
 
@@ -139,6 +139,11 @@ public:
     static void updateVisibilityIcons();
 
     QList<QTreeWidgetItem*> childrenOfItem(const QTreeWidgetItem& item) const;
+    void updateIsolateAction(QTreeWidgetItem* item);
+    QAction* getIsolateAction() const
+    {
+        return isolateAction;
+    }
 
 protected:
     /// Observer message from the Selection
@@ -224,6 +229,7 @@ protected Q_SLOTS:
     void onSelectTimer();
     void onShowHidden();
     void onToggleVisibilityInTree();
+    void onIsolate();
     void onSearchObjects();
     void onOpenFileLocation();
 
@@ -265,6 +271,10 @@ private:
 
     bool CheckForDependents();
     void addDependentToSelection(App::Document* doc, App::DocumentObject* docObject);
+    std::vector<App::DocumentObject*> getIsolateTargets(
+        QTreeWidgetItem* item,
+        DocumentItem*& outDocItem
+    ) const;
     static TreeWidget* getTreeForSelection();
 
 private:
@@ -278,6 +288,7 @@ private:
     QAction* recomputeObjectAction;
     QAction* showHiddenAction;
     QAction* toggleVisibilityInTreeAction;
+    QAction* isolateAction;
     QAction* reloadDocAction;
     QAction* closeDocAction;
     QAction* searchObjectsAction;
@@ -352,7 +363,7 @@ public:
     DocumentItem(const Gui::Document* doc, QTreeWidgetItem* parent);
     ~DocumentItem() override;
 
-    Gui::Document* document() const;
+    GuiExport Gui::Document* document() const;
     void clearSelection(DocumentObjectItem* exclude = nullptr);
     void updateSelection(QTreeWidgetItem*, bool unselect = false);
     void updateSelection();
@@ -380,6 +391,10 @@ public:
 
     bool showHidden() const;
     void setShowHidden(bool show);
+    GuiExport bool isIsolated() const;
+    GuiExport const std::set<App::DocumentObject*>& getIsolatedObjects() const;
+    GuiExport void isolateObjects(const std::vector<App::DocumentObject*>& objs);
+    GuiExport void unisolate();
 
     TreeWidget* getTree() const;
     const char* getTreeName() const;
@@ -460,6 +475,8 @@ private:
     std::unordered_map<App::DocumentObject*, DocumentObjectDataPtr> ObjectMap;
     std::unordered_map<App::DocumentObject*, std::set<App::DocumentObject*>> _ParentMap;
     std::vector<App::DocumentObject*> PopulateObjects;
+    std::set<App::DocumentObject*> isolatedObjects;
+    std::unordered_map<App::DocumentObject*, bool> visibilityBackup;
 
     ExpandInfoPtr _ExpandInfo;
     void restoreItemExpansion(const ExpandInfoPtr&, DocumentObjectItem*);
@@ -493,7 +510,7 @@ public:
     DocumentObjectItem(DocumentItem* ownerDocItem, DocumentObjectDataPtr data);
     ~DocumentObjectItem() override;
 
-    Gui::ViewProviderDocumentObject* object() const;
+    GuiExport Gui::ViewProviderDocumentObject* object() const;
     void testStatus(bool resetStatus, QIcon& icon1, QIcon& icon2);
     void testStatus(bool resetStatus);
     bool isVisibleInTree() const;
@@ -511,7 +528,7 @@ public:
     DocumentItem* getParentDocument() const;
     // Get the owner document (where the object is displayed, either stored or
     // linked in) of this object
-    DocumentItem* getOwnerDocument() const;
+    GuiExport DocumentItem* getOwnerDocument() const;
 
     // check if a new item is required at root
     bool requiredAtRoot(bool excludeSelf = true) const;

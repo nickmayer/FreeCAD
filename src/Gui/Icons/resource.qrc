@@ -182,6 +182,7 @@
         <file>Std_HideObjects.svg</file>
         <file>Std_HideSelection.svg</file>
         <file>Std_Import.svg</file>
+        <file>Std_IsolateSelection.svg</file>
         <file>Std_MarkToRecompute.svg</file>
         <file>Std_MergeProjects.svg</file>
         <file>Std_Placement.svg</file>
@@ -221,6 +222,7 @@
         <file>Std_Tool8.svg</file>
         <file>Std_Tool9.svg</file>
         <file>Std_TransformManip.svg</file>
+        <file>Std_UnisolateSelection.svg</file>
         <file>Std_UserEditModeColor.svg</file>
         <file>Std_UserEditModeCutting.svg</file>
         <file>Std_UserEditModeDefault.svg</file>
